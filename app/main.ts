@@ -12,9 +12,20 @@ rl.on("line", (line) => {
     rl.close();
     return;
   }
-  console.error(`${line}: command not found`);
-  rl.prompt();
+
+  else if (line.startsWith("echo")) {
+    console.log(line.split(" ").slice(1).join(" "));
+    rl.prompt();
+    return;
+  } else {
+    console.error(`${line.split(" ")[0]}: command not found`);
+    rl.prompt();
+  }
+
+  
+
 });
+
 
 // rl.on("close", () => {
 //   console.log("Exiting...");
