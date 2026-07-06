@@ -112,6 +112,23 @@ function parseCommandLine(line: string): string[] {
       continue;
     }
 
+    if (inDoubleQuotes && char === "\\") {
+      if (i + 1 < line.length) {
+        const next = line[i + 1];
+        if (next === '"' || next === "\\" || next === "$" || next === "`") {
+          current += next;
+          i++;
+        } else if (next === "\n") {
+          i++;
+        } else {
+          current += char;
+        }
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
     if (char === "'" && !inDoubleQuotes) {
       inSingleQuotes = !inSingleQuotes;
       continue;
