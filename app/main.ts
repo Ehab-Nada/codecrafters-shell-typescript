@@ -10,7 +10,7 @@ const rl = createInterface({
   prompt: "$ ",
 });
 
-const builtInCommands = ["echo", "exit", "type"];
+const builtInCommands = ["echo", "exit", "type", "pwd"];
 
 rl.prompt();
 rl.on("line", (line) => {
@@ -50,6 +50,10 @@ rl.on("line", (line) => {
 
     }
     rl.prompt();
+  } else if (command == "pwd"){
+    console.log(process.cwd());
+    rl.prompt();
+    return;
   } else {
 
     const executablePath = findExecutableInPath(command);
