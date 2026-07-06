@@ -1,5 +1,5 @@
 import { createInterface } from "readline";
-import { accessSync, constants, statSync } from "fs";
+import { accessSync, closeSync, constants, openSync, statSync, writeFileSync } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 
@@ -14,7 +14,7 @@ const builtInCommands = ["echo", "exit", "type", "pwd", "cd"];
 
 rl.prompt();
 rl.on("line", (line) => {
-  const parts = parseCommandLine(line);
+  const { args: parts, redirectOut } = parseCommand(line);
   const command = parts[0];
   const arg = parts[1];
 
@@ -25,7 +25,7 @@ rl.on("line", (line) => {
     rl.close();
     return;
   } else if (command == "echo") {
-    console.log(parts.slice(1).join(" "));
+    writeStdout(parts.slice(1).join(" ") + "\n", redirectOut);
     rl.prompt();
     return;
   } else if (command == "type") {
@@ -35,23 +35,23 @@ rl.on("line", (line) => {
     }
 
     const found = builtInCommands.includes(arg);
+    let output: string;
     if (found) {
-      console.log(`${arg} is a shell builtin`);
+      output = `${arg} is a shell builtin\n`;
     } else {
-
       const executablePath = findExecutableInPath(arg);
 
-      if(executablePath){
-        console.log(`${arg} is ${executablePath}`);
-
+      if (executablePath) {
+        output = `${arg} is ${executablePath}\n`;
       } else {
-        console.log(`${arg}: not found`);
+        output = `${arg}: not found\n`;
       }
-
     }
+
+    writeStdout(output, redirectOut);
     rl.prompt();
   } else if (command == "pwd"){
-    console.log(process.cwd());
+    writeStdout(process.cwd() + "\n", redirectOut);
     rl.prompt();
     return;
   } else if (command == "cd") {
@@ -78,11 +78,16 @@ rl.on("line", (line) => {
     }
 
 
-    const child = spawn(command, parts.slice(1),{
-      stdio: "inherit",
+    const stdout = redirectOut ? openSync(redirectOut, "w") : "inherit";
+
+    const child = spawn(command, parts.slice(1), {
+      stdio: ["inherit", stdout, "inherit"],
     });
 
     child.on("close", () => {
+      if (typeof stdout === "number") {
+        closeSync(stdout);
+      }
       rl.prompt();
     });
 
@@ -93,14 +98,47 @@ rl.on("line", (line) => {
 
 
 
-function parseCommandLine(line: string): string[] {
+function parseCommand(line: string): { args: string[]; redirectOut: string | null } {
   const args: string[] = [];
   let current = "";
+  let redirectOut: string | null = null;
   let inSingleQuotes = false;
   let inDoubleQuotes = false;
+  let collectingRedirect = false;
+  let skipRedirectWhitespace = false;
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
+
+    if (!collectingRedirect && !inSingleQuotes && !inDoubleQuotes) {
+      const redirectMatch = line.slice(i).match(/^(\d+)?>/);
+      if (redirectMatch) {
+        const fd = redirectMatch[1] ? parseInt(redirectMatch[1], 10) : 1;
+        if (fd === 1) {
+          if (current.length > 0) {
+            args.push(current);
+            current = "";
+          }
+          collectingRedirect = true;
+          skipRedirectWhitespace = true;
+          i += redirectMatch[0].length - 1;
+          continue;
+        }
+      }
+    }
+
+    if (collectingRedirect && skipRedirectWhitespace && /\s/.test(char)) {
+      continue;
+    }
+    skipRedirectWhitespace = false;
+
+    if (collectingRedirect && !inSingleQuotes && !inDoubleQuotes && /\s/.test(char)) {
+      if (current.length > 0) {
+        redirectOut = current;
+        break;
+      }
+      continue;
+    }
 
     if (!inSingleQuotes && !inDoubleQuotes && char === "\\") {
       if (i + 1 < line.length) {
@@ -139,7 +177,7 @@ function parseCommandLine(line: string): string[] {
       continue;
     }
 
-    if (!inSingleQuotes && !inDoubleQuotes && /\s/.test(char)) {
+    if (!collectingRedirect && !inSingleQuotes && !inDoubleQuotes && /\s/.test(char)) {
       if (current.length > 0) {
         args.push(current);
         current = "";
@@ -150,11 +188,23 @@ function parseCommandLine(line: string): string[] {
     current += char;
   }
 
-  if (current.length > 0) {
+  if (collectingRedirect) {
+    if (current.length > 0) {
+      redirectOut = current;
+    }
+  } else if (current.length > 0) {
     args.push(current);
   }
 
-  return args;
+  return { args, redirectOut };
+}
+
+function writeStdout(output: string, redirectOut: string | null) {
+  if (redirectOut) {
+    writeFileSync(redirectOut, output);
+  } else {
+    process.stdout.write(output);
+  }
 }
 
 function expandTilde(target: string): string {
