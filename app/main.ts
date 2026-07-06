@@ -6,19 +6,48 @@ const rl = createInterface({
   prompt: "$ ",
 });
 
+const builtInCommands = ["echo", "exit","type"];
+
 rl.prompt();
 rl.on("line", (line) => {
-  if(line == "exit") {
+
+  const parts = line.trim().split(/\s+/);
+  const command = parts[0];
+  const arg = parts[1];
+
+  if(command == ""){
+    rl.prompt();
+    return;
+  }
+  else if(command == "exit") {
     rl.close();
     return;
   }
-
-  else if (line.startsWith("echo")) {
-    console.log(line.split(" ").slice(1).join(" "));
+  else if (command == "echo") {
+    console.log(parts.slice(1).join(" "));
     rl.prompt();
     return;
-  } else {
-    console.error(`${line.split(" ")[0]}: command not found`);
+  } else if (command == "type"){
+
+    if(!arg){
+      rl.prompt();
+      return;
+    }
+
+    const found = builtInCommands.includes(arg);
+    if(found){
+      console.log(`${arg} is a shell builtin`);
+
+    } else {
+      console.log(`${arg}: not found`);
+    }
+    rl.prompt();
+
+  }
+  
+  
+  else {
+    console.error(`${command}: command not found`);
     rl.prompt();
   }
 
