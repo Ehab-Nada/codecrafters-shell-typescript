@@ -55,7 +55,7 @@ rl.on("line", (line) => {
     rl.prompt();
     return;
   } else if (command == "cd") {
-    const target = arg ?? process.env.HOME;
+    const target = expandTilde(arg ?? process.env.HOME ?? "");
 
     if (!target || !isDirectory(target)) {
       console.error(`cd: ${arg}: No such file or directory`);
@@ -92,6 +92,19 @@ rl.on("line", (line) => {
 });
 
 
+
+function expandTilde(target: string): string {
+  const home = process.env.HOME;
+  if (!home) return target;
+
+  if (target === "~") {
+    return home;
+  }
+  if (target.startsWith("~/")) {
+    return path.join(home, target.slice(2));
+  }
+  return target;
+}
 
 function isDirectory(target: string): boolean {
   try {
