@@ -14,7 +14,7 @@ const builtInCommands = ["echo", "exit", "type", "pwd", "cd"];
 
 rl.prompt();
 rl.on("line", (line) => {
-  const parts = line.trim().split(/\s+/);
+  const parts = parseCommandLine(line);
   const command = parts[0];
   const arg = parts[1];
 
@@ -92,6 +92,35 @@ rl.on("line", (line) => {
 });
 
 
+
+function parseCommandLine(line: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inSingleQuotes = false;
+
+  for (const char of line) {
+    if (char === "'") {
+      inSingleQuotes = !inSingleQuotes;
+      continue;
+    }
+
+    if (!inSingleQuotes && /\s/.test(char)) {
+      if (current.length > 0) {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    args.push(current);
+  }
+
+  return args;
+}
 
 function expandTilde(target: string): string {
   const home = process.env.HOME;
