@@ -1,5 +1,5 @@
 import { createInterface } from "readline";
-import { accessSync, constants } from "fs";
+import { accessSync, constants, statSync } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 
@@ -10,7 +10,7 @@ const rl = createInterface({
   prompt: "$ ",
 });
 
-const builtInCommands = ["echo", "exit", "type", "pwd"];
+const builtInCommands = ["echo", "exit", "type", "pwd", "cd"];
 
 rl.prompt();
 rl.on("line", (line) => {
@@ -54,7 +54,20 @@ rl.on("line", (line) => {
     console.log(process.cwd());
     rl.prompt();
     return;
-  } else {
+  } else if (command == "cd") {
+    const target = arg ?? process.env.HOME;
+
+    if (!target || !isDirectory(target)) {
+      console.error(`cd: ${arg}: No such file or directory`);
+      rl.prompt();
+      return;
+    }
+
+    process.chdir(target);
+    rl.prompt();
+    return;
+  }
+  else {
 
     const executablePath = findExecutableInPath(command);
 
@@ -79,6 +92,14 @@ rl.on("line", (line) => {
 });
 
 
+
+function isDirectory(target: string): boolean {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 function findExecutableInPath(command: string): string | null {
   const pathEnv = process.env.PATH;
