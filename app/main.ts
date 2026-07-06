@@ -1,6 +1,8 @@
 import { createInterface } from "readline";
 import { accessSync, constants } from "fs";
 import path from "path";
+import { spawn } from "child_process";
+
 
 const rl = createInterface({
   input: process.stdin,
@@ -49,8 +51,26 @@ rl.on("line", (line) => {
     }
     rl.prompt();
   } else {
-    console.error(`${command}: command not found`);
-    rl.prompt();
+
+    const executablePath = findExecutableInPath(command);
+
+    if(!executablePath){
+      console.error(`${command}: command not found`);
+      rl.prompt();
+      return;
+    }
+
+
+    const child = spawn(command, parts.slice(1),{
+      stdio: "inherit",
+    });
+
+    child.on("close", () => {
+      rl.prompt();
+    });
+
+
+
   }
 });
 
