@@ -99,7 +99,19 @@ function parseCommandLine(line: string): string[] {
   let inSingleQuotes = false;
   let inDoubleQuotes = false;
 
-  for (const char of line) {
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (!inSingleQuotes && !inDoubleQuotes && char === "\\") {
+      if (i + 1 < line.length) {
+        current += line[i + 1];
+        i++;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
     if (char === "'" && !inDoubleQuotes) {
       inSingleQuotes = !inSingleQuotes;
       continue;
