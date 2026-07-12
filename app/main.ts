@@ -13,12 +13,17 @@ const rl = createInterface({
   completer: (line: string): [string[], string] => {
     const partial = line.split(" ")[0] ?? "";
     if (line.includes(" ") && partial !== "") {
+      process.stdout.write("\x07");
       return [[], line];
     }
 
     const hits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
     if (hits.length === 1) {
       return [[`${hits[0]} `], line];
+    }
+
+    if (hits.length === 0) {
+      process.stdout.write("\x07");
     }
 
     return [hits, line];
