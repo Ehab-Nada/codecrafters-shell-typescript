@@ -4,10 +4,25 @@ import path from "path";
 import { spawn } from "child_process";
 
 
+const tabCompletableCommands = ["echo", "exit"];
+
 const rl = createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
+  completer: (line: string): [string[], string] => {
+    const partial = line.split(" ")[0] ?? "";
+    if (line.includes(" ") && partial !== "") {
+      return [[], line];
+    }
+
+    const hits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
+    if (hits.length === 1) {
+      return [[`${hits[0]} `], line];
+    }
+
+    return [hits, line];
+  },
 });
 
 const builtInCommands = ["echo", "exit", "type", "pwd", "cd"];
