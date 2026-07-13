@@ -6,6 +6,9 @@ import { spawn } from "child_process";
 
 const tabCompletableCommands = ["echo", "exit"];
 
+let lastTabPartial = "";
+let tabPressCount = 0;
+
 const rl = createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -13,23 +16,45 @@ const rl = createInterface({
   completer: (line: string): [string[], string] => {
     const partial = line.split(" ")[0] ?? "";
     if (line.includes(" ") && partial !== "") {
+      lastTabPartial = "";
+      tabPressCount = 0;
       process.stdout.write("\x07");
       return [[], line];
     }
 
     const builtinHits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
     const executableHits = findExecutableCompletions(partial);
-    const hits = [...new Set([...builtinHits, ...executableHits])];
+    const hits = [...new Set([...builtinHits, ...executableHits])].sort();
 
     if (hits.length === 1) {
+      lastTabPartial = "";
+      tabPressCount = 0;
       return [[`${hits[0]} `], line];
     }
 
     if (hits.length === 0) {
+      lastTabPartial = "";
+      tabPressCount = 0;
       process.stdout.write("\x07");
+      return [[], line];
     }
 
-    return [hits, line];
+    if (lastTabPartial !== partial) {
+      lastTabPartial = partial;
+      tabPressCount = 0;
+    }
+    tabPressCount++;
+
+    if (tabPressCount === 1) {
+      process.stdout.write("\x07");
+      return [[], line];
+    }
+
+    process.stdout.write(`\n${hits.join("  ")}\n`);
+    rl.prompt(true);
+    lastTabPartial = "";
+    tabPressCount = 0;
+    return [[], line];
   },
 });
 
@@ -43,6 +68,8 @@ type Redirect = {
 
 rl.prompt();
 rl.on("line", (line) => {
+  lastTabPartial = "";
+  tabPressCount = 0;
   const { args: parts, redirects } = parseCommand(line);
   const command = parts[0];
   const arg = parts[1];
