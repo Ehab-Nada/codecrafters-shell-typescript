@@ -1,10 +1,11 @@
 import { createInterface } from "readline";
 import { accessSync, appendFileSync, closeSync, constants, openSync, readdirSync, statSync, writeFileSync } from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 
 
 const tabCompletableCommands = ["echo", "exit"];
+const completionSpecs = new Map<string, string>();
 
 let lastTabPartial = "";
 let tabPressCount = 0;
@@ -88,6 +89,11 @@ function completeArgument(line: string): [string[], string] {
   const linePrefix = line.slice(0, lastSpace + 1);
   const partial = line.slice(lastSpace + 1);
   const command = line.slice(0, lastSpace).split(/\s+/)[0] ?? "";
+
+  if (command && completionSpecs.has(command)) {
+    return completeProgrammable(command, line, linePrefix, partial);
+  }
+
   const directoriesOnly = command === "cd";
 
   const pathHits = findPathHits(partial, directoriesOnly);
@@ -129,7 +135,7 @@ rl = createInterface({
   },
 });
 
-const builtInCommands = ["echo", "exit", "type", "pwd", "cd"];
+const builtInCommands = ["echo", "exit", "type", "pwd", "cd", "complete"];
 
 type Redirect = {
   fd: 1 | 2;
@@ -191,6 +197,10 @@ rl.on("line", (line) => {
     }
 
     process.chdir(target);
+    rl.prompt();
+    return;
+  } else if (command == "complete") {
+    handleCompleteBuiltin(parts.slice(1), redirects);
     rl.prompt();
     return;
   }
@@ -463,6 +473,102 @@ function findPathHits(partial: string, directoriesOnly: boolean): PathHit[] {
   }
 
   return hits.sort((a, b) => a.suffix.localeCompare(b.suffix));
+}
+
+function handleCompleteBuiltin(args: string[], redirects: Redirect[]): void {
+  if (args.length === 0) {
+    const lines = [...completionSpecs.keys()]
+      .sort()
+      .map((cmd) => `complete -C '${completionSpecs.get(cmd)}' ${cmd}`)
+      .join("\n");
+    writeOutput(lines.length > 0 ? lines + "\n" : null, null, redirects);
+    return;
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-C" && i + 2 < args.length) {
+      completionSpecs.set(args[i + 2], args[i + 1]);
+      return;
+    }
+    if (args[i] === "-r" && i + 1 < args.length) {
+      completionSpecs.delete(args[i + 1]);
+      return;
+    }
+  }
+}
+
+function completeProgrammable(
+  command: string,
+  line: string,
+  linePrefix: string,
+  partial: string,
+): [string[], string] {
+  const completerPath = completionSpecs.get(command)!;
+  const beforePartial = line.slice(0, line.lastIndexOf(" ")).trim();
+  const words = beforePartial ? beforePartial.split(/\s+/) : [];
+  const prev = words.length > 0 ? words[words.length - 1]! : "";
+
+  const result = spawnSync(completerPath, [command, partial, prev], {
+    env: {
+      ...process.env,
+      COMP_LINE: line,
+      COMP_POINT: String(line.length),
+    },
+    encoding: "utf-8",
+  });
+
+  const exitCode = result.status ?? 1;
+  const stdoutLines = (result.stdout ?? "")
+    .split("\n")
+    .filter((candidate) => candidate.length > 0);
+  const stderrLines = (result.stderr ?? "")
+    .split("\n")
+    .filter((candidate) => candidate.length > 0);
+
+  if (exitCode !== 0) {
+    resetTabState();
+    ringBell();
+    return [[], line];
+  }
+
+  let candidates: string[];
+  let stderrTail: string[] = [];
+  const useStdout = stdoutLines.length > 0;
+
+  if (useStdout) {
+    candidates = stdoutLines.filter((candidate) => candidate.startsWith(partial));
+  } else if (stderrLines.length > 0) {
+    const first = stderrLines[0]!;
+    if (!first.startsWith(partial)) {
+      resetTabState();
+      ringBell();
+      return [[], line];
+    }
+    candidates = [first];
+    stderrTail = stderrLines.slice(1);
+  } else {
+    resetTabState();
+    ringBell();
+    return [[], line];
+  }
+
+  const writeStderrTail = () => {
+    for (const errLine of stderrTail) {
+      process.stderr.write(`${errLine}\n`);
+    }
+  };
+
+  return completeWithMatches(
+    line,
+    partial,
+    linePrefix,
+    candidates,
+    candidates,
+    (full) => {
+      writeStderrTail();
+      return useStdout ? `${full} ` : full;
+    },
+  );
 }
 
 function longestCommonPrefix(strings: string[]): string {
