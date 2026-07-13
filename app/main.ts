@@ -1,5 +1,5 @@
 import { createInterface } from "readline";
-import { accessSync, appendFileSync, closeSync, constants, openSync, statSync, writeFileSync } from "fs";
+import { accessSync, appendFileSync, closeSync, constants, openSync, readdirSync, statSync, writeFileSync } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 
@@ -17,7 +17,10 @@ const rl = createInterface({
       return [[], line];
     }
 
-    const hits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
+    const builtinHits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
+    const executableHits = findExecutableCompletions(partial);
+    const hits = [...new Set([...builtinHits, ...executableHits])];
+
     if (hits.length === 1) {
       return [[`${hits[0]} `], line];
     }
@@ -302,6 +305,34 @@ function isDirectory(target: string): boolean {
   } catch {
     return false;
   }
+}
+
+function findExecutableCompletions(partial: string): string[] {
+  const pathEnv = process.env.PATH;
+  if (!pathEnv) return [];
+
+  const matches = new Set<string>();
+  for (const dir of pathEnv.split(path.delimiter)) {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.startsWith(partial)) continue;
+
+      const fullPath = path.join(dir, entry);
+      try {
+        accessSync(fullPath, constants.X_OK);
+        matches.add(entry);
+      } catch {
+      }
+    }
+  }
+
+  return [...matches];
 }
 
 function findExecutableInPath(command: string): string | null {
