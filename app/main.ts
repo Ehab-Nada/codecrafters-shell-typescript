@@ -39,6 +39,13 @@ const rl = createInterface({
       return [[], line];
     }
 
+    const commonPrefix = longestCommonPrefix(hits);
+    if (commonPrefix.length > partial.length) {
+      lastTabPartial = "";
+      tabPressCount = 0;
+      return [[commonPrefix], line];
+    }
+
     if (lastTabPartial !== partial) {
       lastTabPartial = partial;
       tabPressCount = 0;
@@ -332,6 +339,20 @@ function isDirectory(target: string): boolean {
   } catch {
     return false;
   }
+}
+
+function longestCommonPrefix(strings: string[]): string {
+  if (strings.length === 0) return "";
+  if (strings.length === 1) return strings[0];
+
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length; i++) {
+    while (!strings[i].startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+      if (prefix === "") return "";
+    }
+  }
+  return prefix;
 }
 
 function findExecutableCompletions(partial: string): string[] {
