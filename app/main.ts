@@ -92,13 +92,20 @@ function completeArgument(line: string): [string[], string] {
 
   const pathHits = findPathHits(partial, directoriesOnly);
   const hits = pathHits.map((hit) => hit.suffix);
+  const listHits = pathHits.map((hit) => {
+    const entryPath = path.join(hit.parentDir, hit.entryName);
+    if (isDirectoryPath(entryPath)) {
+      return `${hit.suffix}/`;
+    }
+    return hit.suffix;
+  });
 
   return completeWithMatches(
     line,
     partial,
     linePrefix,
     hits,
-    hits,
+    listHits,
     (full, hit) => {
       const pathHit = pathHits.find((candidate) => candidate.suffix === hit)!;
       const entryPath = path.join(pathHit.parentDir, pathHit.entryName);
