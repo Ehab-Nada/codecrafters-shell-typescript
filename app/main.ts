@@ -494,6 +494,20 @@ function handleCompleteBuiltin(args: string[], redirects: Redirect[]): void {
       completionSpecs.delete(args[i + 1]);
       return;
     }
+    if (args[i] === "-p" && i + 1 < args.length) {
+      const cmd = args[i + 1];
+      const completerPath = completionSpecs.get(cmd);
+      if (completerPath) {
+        writeOutput(`complete -C '${completerPath}' ${cmd}\n`, null, redirects);
+      } else {
+        writeOutput(
+          null,
+          `complete: ${cmd}: no completion specification\n`,
+          redirects,
+        );
+      }
+      return;
+    }
   }
 }
 
