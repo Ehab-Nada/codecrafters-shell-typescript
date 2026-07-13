@@ -8,60 +8,117 @@ const tabCompletableCommands = ["echo", "exit"];
 
 let lastTabPartial = "";
 let tabPressCount = 0;
+let rl: ReturnType<typeof createInterface>;
 
-const rl = createInterface({
+type PathHit = {
+  suffix: string;
+  entryName: string;
+  parentDir: string;
+};
+
+function ringBell(): void {
+  process.stdout.write("\x07");
+}
+
+function resetTabState(): void {
+  lastTabPartial = "";
+  tabPressCount = 0;
+}
+
+function completeWithMatches(
+  line: string,
+  typedPartial: string,
+  linePrefix: string,
+  hits: string[],
+  listHits: string[],
+  formatSingle: (fullCompletion: string, hit: string) => string,
+): [string[], string] {
+  if (hits.length === 1) {
+    resetTabState();
+    return [[formatSingle(linePrefix + hits[0], hits[0])], line];
+  }
+
+  if (hits.length === 0) {
+    resetTabState();
+    ringBell();
+    return [[], line];
+  }
+
+  const commonPrefix = longestCommonPrefix(hits);
+  if (commonPrefix.length > typedPartial.length) {
+    resetTabState();
+    return [[linePrefix + commonPrefix], line];
+  }
+
+  if (lastTabPartial !== line) {
+    lastTabPartial = line;
+    tabPressCount = 0;
+  }
+  tabPressCount++;
+
+  if (tabPressCount === 1) {
+    ringBell();
+    return [[], line];
+  }
+
+  process.stdout.write(`\n${listHits.join("  ")}\n`);
+  rl.prompt(true);
+  resetTabState();
+  return [[], line];
+}
+
+function completeCommand(line: string): [string[], string] {
+  const partial = line;
+  const builtinHits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
+  const executableHits = findExecutableCompletions(partial);
+  const hits = [...new Set([...builtinHits, ...executableHits])].sort();
+
+  return completeWithMatches(
+    line,
+    partial,
+    "",
+    hits,
+    hits,
+    (_full, hit) => `${hit} `,
+  );
+}
+
+function completeArgument(line: string): [string[], string] {
+  const lastSpace = line.lastIndexOf(" ");
+  const linePrefix = line.slice(0, lastSpace + 1);
+  const partial = line.slice(lastSpace + 1);
+  const command = line.slice(0, lastSpace).split(/\s+/)[0] ?? "";
+  const directoriesOnly = command === "cd";
+
+  const pathHits = findPathHits(partial, directoriesOnly);
+  const hits = pathHits.map((hit) => hit.suffix);
+
+  return completeWithMatches(
+    line,
+    partial,
+    linePrefix,
+    hits,
+    hits,
+    (full, hit) => {
+      const pathHit = pathHits.find((candidate) => candidate.suffix === hit)!;
+      const entryPath = path.join(pathHit.parentDir, pathHit.entryName);
+      if (directoriesOnly || isDirectoryPath(entryPath)) {
+        return `${full}/`;
+      }
+      return `${full} `;
+    },
+  );
+}
+
+rl = createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
   completer: (line: string): [string[], string] => {
-    const partial = line.split(" ")[0] ?? "";
-    if (line.includes(" ") && partial !== "") {
-      lastTabPartial = "";
-      tabPressCount = 0;
-      process.stdout.write("\x07");
-      return [[], line];
+    if (!line.includes(" ")) {
+      return completeCommand(line);
     }
-
-    const builtinHits = tabCompletableCommands.filter((cmd) => cmd.startsWith(partial));
-    const executableHits = findExecutableCompletions(partial);
-    const hits = [...new Set([...builtinHits, ...executableHits])].sort();
-
-    if (hits.length === 1) {
-      lastTabPartial = "";
-      tabPressCount = 0;
-      return [[`${hits[0]} `], line];
-    }
-
-    if (hits.length === 0) {
-      lastTabPartial = "";
-      tabPressCount = 0;
-      process.stdout.write("\x07");
-      return [[], line];
-    }
-
-    const commonPrefix = longestCommonPrefix(hits);
-    if (commonPrefix.length > partial.length) {
-      lastTabPartial = "";
-      tabPressCount = 0;
-      return [[commonPrefix], line];
-    }
-
-    if (lastTabPartial !== partial) {
-      lastTabPartial = partial;
-      tabPressCount = 0;
-    }
-    tabPressCount++;
-
-    if (tabPressCount === 1) {
-      process.stdout.write("\x07");
-      return [[], line];
-    }
-
-    process.stdout.write(`\n${hits.join("  ")}\n`);
-    rl.prompt(true);
-    lastTabPartial = "";
-    tabPressCount = 0;
-    return [[], line];
+    return completeArgument(line);
   },
 });
 
@@ -339,6 +396,66 @@ function isDirectory(target: string): boolean {
   } catch {
     return false;
   }
+}
+
+function parsePartialPath(partial: string): {
+  dir: string;
+  basePrefix: string;
+  partialDir: string;
+} {
+  const slashIndex = partial.lastIndexOf("/");
+  if (slashIndex === -1) {
+    return { dir: process.cwd(), basePrefix: partial, partialDir: "" };
+  }
+
+  const dirPart = partial.slice(0, slashIndex);
+  return {
+    dir: path.resolve(process.cwd(), dirPart),
+    basePrefix: partial.slice(slashIndex + 1),
+    partialDir: `${dirPart}/`,
+  };
+}
+
+function isDirectoryPath(target: string): boolean {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function findPathHits(partial: string, directoriesOnly: boolean): PathHit[] {
+  const { dir, basePrefix, partialDir } = parsePartialPath(partial);
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+
+  const hits: PathHit[] = [];
+  for (const entry of entries) {
+    if (!entry.startsWith(basePrefix)) {
+      continue;
+    }
+
+    const entryPath = path.join(dir, entry);
+    try {
+      const entryStat = statSync(entryPath);
+      if (directoriesOnly && !entryStat.isDirectory()) {
+        continue;
+      }
+      hits.push({
+        suffix: `${partialDir}${entry}`,
+        entryName: entry,
+        parentDir: dir,
+      });
+    } catch {
+    }
+  }
+
+  return hits.sort((a, b) => a.suffix.localeCompare(b.suffix));
 }
 
 function longestCommonPrefix(strings: string[]): string {
