@@ -1,6 +1,6 @@
 {
   "name": "@codecrafters/shell",
-  "description": "Build your own Shell challenge, from CodeCrafters",
+  "description": "POSIX-style shell in TypeScript/Bun — by Ehab Nada (CodeCrafters)",
   "type": "module",
   "scripts": {
     "dev": "bun run app/main.ts"

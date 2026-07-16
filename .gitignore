@@ -1,1 +1,7 @@
 node_modules/
+.DS_Store
+.codecrafters-test-output.txt
+.tab_test/
+*.log
+.env
+.env.*

@@ -1,34 +1,123 @@
-[![progress-banner](https://backend.codecrafters.io/progress/shell/2bb754a0-11a9-43c8-9e65-bf82e3970f44)](https://app.codecrafters.io/users/Ehab-Nada?r=2qF)
+# Shell — by Ehab Nada
 
-This is a starting point for TypeScript solutions to the
-["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview).
+A POSIX-style shell built in **TypeScript** with **Bun**, as a solution to the
+[CodeCrafters “Build Your Own Shell”](https://app.codecrafters.io/courses/shell/overview) challenge.
 
-In this challenge, you'll build your own POSIX compliant shell that's capable of
-interpreting shell commands, running external programs and builtin commands like
-cd, pwd, echo and more. Along the way, you'll learn about shell command parsing,
-REPLs, builtin commands, and more.
+Type a command. Press Tab. Pipe it. Background it. Your terminal, your rules.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+```text
+$ echo hello | wc
+$ sleep 30 &
+$ jobs
+$ history
+```
 
-# Passing the first stage
+---
 
-The entry point for your `shell` implementation is in `app/main.ts`. Study and
-uncomment the relevant code, then run the command below to execute the tests on
-our servers:
+## Features
+
+| Area | What it can do |
+|------|----------------|
+| **Builtins** | `echo`, `exit`, `type`, `pwd`, `cd`, `complete`, `jobs`, `history`, `declare` |
+| **Parsing** | Quotes, backslash escapes, `>` / `>>` / `2>` redirects |
+| **Completion** | Commands, files, directories, programmable `complete -C` |
+| **Jobs** | Background `&`, job listing, Done notifications, recycled IDs |
+| **Pipelines** | Multi-stage `\|`, including builtins in the pipe |
+| **History** | Listing, limits, arrows, `-r` / `-w` / `-a`, `HISTFILE` |
+| **Variables** | `declare`, `$VAR`, `${VAR}` expansion |
+
+---
+
+## Quick start
+
+**Requirements:** [Bun](https://bun.sh) 1.3+
 
 ```sh
+bun install
+./your_program.sh
+```
+
+Or run the entry point directly:
+
+```sh
+bun run app/main.ts
+```
+
+Submit / verify against CodeCrafters:
+
+```sh
+codecrafters test
 codecrafters submit
 ```
 
-Time to move on to the next stage!
+---
 
-# Stage 2 & beyond
+## Project layout
 
-Note: This section is for stages 2 and beyond.
+```text
+app/
+  main.ts        # REPL entry + command dispatch
+  parser.ts      # Quotes, redirects, pipes, $VAR expansion
+  executor.ts    # External commands, pipelines, background jobs
+  builtins.ts    # Shell builtins (history, declare, complete, …)
+  completion.ts  # Tab + programmable completion
+  jobs.ts        # Job table, markers, reaping
+  history.ts     # In-memory + file persistence
+  variables.ts   # Shell variables
+  runtime.ts     # Readline + prompt helpers
+  io.ts          # Output / redirects
+  fsUtils.ts     # PATH lookup, paths, tilde
+  state.ts       # Shared registries
+  types.ts       # Shared types
+```
 
-1. Ensure you have `bun (1.3)` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `app/main.ts`.
-1. Run `codecrafters submit` to submit your solution to CodeCrafters. Test
-   output will be streamed to your terminal.
+---
+
+## Example session
+
+```text
+$ pwd
+/Users/you/project
+
+$ echo "hello world"
+hello world
+
+$ sleep 5 &
+[1] 4242
+
+$ jobs
+[1]+  Running                 sleep 5 &
+
+$ declare NAME=Ehab
+$ echo Hello, $NAME
+Hello, Ehab
+
+$ history 3
+    4  jobs
+    5  declare NAME=Ehab
+    6  history 3
+```
+
+---
+
+## Built with
+
+- [TypeScript](https://www.typescriptlang.org/)
+- [Bun](https://bun.sh)
+- [CodeCrafters Shell Challenge](https://app.codecrafters.io/courses/shell/overview)
+
+---
+
+## Author
+
+**Ehab Nada**
+
+Built while working through CodeCrafters — focused on real shell behavior:
+parsing, processes, jobs, completion, and a clean module layout.
+
+---
+
+## License
+
+This project is provided as a learning / portfolio solution for the CodeCrafters challenge.
+Use and adapt freely for personal learning.
