@@ -35,7 +35,31 @@ function formatJobLine(job: Job): string {
   return `[${job.id}]${jobMarker(job.id)}  ${status.padEnd(24)}${job.command}${suffix}\n`;
 }
 
+function isProcessAlive(pid: number): boolean {
+  if (pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function syncJobStatuses(): void {
+  for (const job of jobTable.values()) {
+    if (!job.running) continue;
+    if (
+      job.child.exitCode !== null ||
+      job.child.signalCode !== null ||
+      !isProcessAlive(job.pid)
+    ) {
+      job.running = false;
+    }
+  }
+}
+
 function reapFinishedJobs(): void {
+  syncJobStatuses();
   const finished = [...jobTable.values()].filter((job) => !job.running);
   for (const job of finished) {
     process.stdout.write(formatJobLine(job));
@@ -546,6 +570,7 @@ rl.on("line", (line) => {
     promptAfterJobs();
     return;
   } else if (command == "jobs") {
+    syncJobStatuses();
     const jobs = [...jobTable.values()].sort((a, b) => a.id - b.id);
     for (const job of jobs) {
       process.stdout.write(formatJobLine(job));
