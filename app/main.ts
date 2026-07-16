@@ -1,11 +1,224 @@
 import { createInterface } from "readline";
-import { accessSync, appendFileSync, closeSync, constants, openSync, readdirSync, statSync, writeFileSync } from "fs";
+import { accessSync, appendFileSync, closeSync, constants, openSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import path from "path";
-import { spawn, spawnSync } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 
 
 const tabCompletableCommands = ["echo", "exit"];
 const completionSpecs = new Map<string, string>();
+
+type Job = {
+  id: number;
+  pid: number;
+  command: string;
+  child: ChildProcess;
+  running: boolean;
+};
+
+const jobTable = new Map<number, Job>();
+
+function allocateJobId(): number {
+  if (jobTable.size === 0) return 1;
+  return Math.max(...jobTable.keys()) + 1;
+}
+
+function jobMarker(id: number): string {
+  const ids = [...jobTable.keys()].sort((a, b) => b - a);
+  if (ids[0] === id) return "+";
+  if (ids[1] === id) return "-";
+  return " ";
+}
+
+function formatJobLine(job: Job): string {
+  const status = job.running ? "Running" : "Done";
+  const suffix = job.running ? " &" : "";
+  return `[${job.id}]${jobMarker(job.id)}  ${status.padEnd(24)}${job.command}${suffix}\n`;
+}
+
+function reapFinishedJobs(): void {
+  const finished = [...jobTable.values()].filter((job) => !job.running);
+  for (const job of finished) {
+    process.stdout.write(formatJobLine(job));
+  }
+  for (const job of finished) {
+    jobTable.delete(job.id);
+  }
+}
+
+function promptAfterJobs(): void {
+  reapFinishedJobs();
+  rl.prompt();
+}
+
+function splitPipeline(line: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let inSingleQuotes = false;
+  let inDoubleQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === "\\" && !inSingleQuotes && i + 1 < line.length) {
+      current += char + line[i + 1];
+      i++;
+      continue;
+    }
+    if (char === "'" && !inDoubleQuotes) {
+      inSingleQuotes = !inSingleQuotes;
+      current += char;
+      continue;
+    }
+    if (char === '"' && !inSingleQuotes) {
+      inDoubleQuotes = !inDoubleQuotes;
+      current += char;
+      continue;
+    }
+    if (char === "|" && !inSingleQuotes && !inDoubleQuotes) {
+      segments.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments;
+}
+
+function builtinOutput(parts: string[]): { stdout: string; stderr: string } | null {
+  const command = parts[0];
+  if (command === "echo") {
+    return { stdout: parts.slice(1).join(" ") + "\n", stderr: "" };
+  }
+  if (command === "pwd") {
+    return { stdout: process.cwd() + "\n", stderr: "" };
+  }
+  if (command === "type") {
+    const target = parts[1];
+    if (!target) return { stdout: "", stderr: "" };
+    if (builtInCommands.includes(target)) {
+      return { stdout: `${target} is a shell builtin\n`, stderr: "" };
+    }
+    const executablePath = findExecutableInPath(target);
+    if (executablePath) {
+      return { stdout: `${target} is ${executablePath}\n`, stderr: "" };
+    }
+    return { stdout: "", stderr: `${target}: not found\n` };
+  }
+  return null;
+}
+
+function runPipeline(segments: string[]): void {
+  const stages = segments.map((segment) => parseCommand(segment));
+  const children: ChildProcess[] = [];
+  // string = buffered builtin output; stream = previous child's stdout
+  let prev: string | NodeJS.ReadableStream | null = null;
+  let lastChild: ChildProcess | null = null;
+  let lastBuiltin: { stdout: string; stderr: string } | null = null;
+
+  for (let i = 0; i < stages.length; i++) {
+    const { args: parts, redirects } = stages[i];
+    const command = parts[0];
+    const isLast = i === stages.length - 1;
+
+    if (!command) {
+      prev = null;
+      continue;
+    }
+
+    const builtin = builtinOutput(parts);
+    if (builtin) {
+      if (prev && typeof prev !== "string") {
+        prev.resume?.();
+      }
+      if (isLast) {
+        lastBuiltin = builtin;
+        lastChild = null;
+      } else {
+        prev = builtin.stdout;
+      }
+      continue;
+    }
+
+    const executablePath = findExecutableInPath(command);
+    if (!executablePath) {
+      process.stderr.write(`${command}: command not found\n`);
+      prev = null;
+      if (isLast) {
+        lastChild = null;
+        lastBuiltin = { stdout: "", stderr: "" };
+      }
+      continue;
+    }
+
+    const stdoutRedirect = redirects.find((redirect) => redirect.fd === 1);
+    const stderrRedirect = redirects.find((redirect) => redirect.fd === 2);
+
+    const stdoutSetting = stdoutRedirect
+      ? openSync(stdoutRedirect.file, stdoutRedirect.append ? "a" : "w")
+      : isLast
+        ? "inherit"
+        : "pipe";
+    const stderrSetting = stderrRedirect
+      ? openSync(stderrRedirect.file, stderrRedirect.append ? "a" : "w")
+      : "inherit";
+    const stdinSetting: "pipe" | "inherit" = prev !== null ? "pipe" : "inherit";
+
+    const child: ChildProcess = spawn(command, parts.slice(1), {
+      stdio: [stdinSetting, stdoutSetting, stderrSetting],
+    });
+    children.push(child);
+
+    child.on("close", () => {
+      if (typeof stdoutSetting === "number") closeSync(stdoutSetting);
+      if (typeof stderrSetting === "number") closeSync(stderrSetting);
+    });
+
+    if (child.stdin) {
+      child.stdin.on("error", () => {});
+      if (typeof prev === "string") {
+        child.stdin.write(prev);
+        child.stdin.end();
+      } else if (prev) {
+        prev.pipe(child.stdin);
+      }
+    }
+
+    prev = child.stdout ?? null;
+    if (isLast) {
+      lastChild = child;
+      lastBuiltin = null;
+    }
+  }
+
+  const finish = () => {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+      }
+    }
+    promptAfterJobs();
+  };
+
+  if (lastChild) {
+    lastChild.on("close", finish);
+  } else {
+    if (lastBuiltin) {
+      if (lastBuiltin.stdout) process.stdout.write(lastBuiltin.stdout);
+      if (lastBuiltin.stderr) process.stderr.write(lastBuiltin.stderr);
+    }
+    if (children.length > 0) {
+      let remaining = children.length;
+      for (const child of children) {
+        child.on("close", () => {
+          remaining--;
+          if (remaining === 0) finish();
+        });
+      }
+    } else {
+      promptAfterJobs();
+    }
+  }
+}
 
 let lastTabPartial = "";
 let tabPressCount = 0;
@@ -135,7 +348,102 @@ rl = createInterface({
   },
 });
 
-const builtInCommands = ["echo", "exit", "type", "pwd", "cd", "complete"];
+const builtInCommands = ["echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history", "declare"];
+
+const commandHistory: string[] = [];
+let lastAppendedIndex = 0;
+
+const shellVariables = new Map<string, string>();
+
+function loadHistoryFile(file: string): void {
+  try {
+    const content = readFileSync(file, "utf-8");
+    for (const entry of content.split("\n")) {
+      if (entry.length > 0) {
+        commandHistory.push(entry);
+      }
+    }
+  } catch {
+  }
+}
+
+function writeHistoryFile(file: string): void {
+  const content = commandHistory.length > 0 ? commandHistory.join("\n") + "\n" : "";
+  writeFileSync(file, content);
+  lastAppendedIndex = commandHistory.length;
+}
+
+function appendHistoryFile(file: string): void {
+  const newEntries = commandHistory.slice(lastAppendedIndex);
+  if (newEntries.length > 0) {
+    appendFileSync(file, newEntries.join("\n") + "\n");
+  }
+  lastAppendedIndex = commandHistory.length;
+}
+
+function handleHistoryBuiltin(args: string[], redirects: Redirect[]): void {
+  const flag = args[0];
+
+  if (flag === "-r" && args[1]) {
+    loadHistoryFile(args[1]);
+    return;
+  }
+  if (flag === "-w" && args[1]) {
+    writeHistoryFile(args[1]);
+    return;
+  }
+  if (flag === "-a" && args[1]) {
+    appendHistoryFile(args[1]);
+    return;
+  }
+
+  let start = 0;
+  if (flag) {
+    const limit = parseInt(flag, 10);
+    if (!Number.isNaN(limit)) {
+      start = Math.max(commandHistory.length - limit, 0);
+    }
+  }
+
+  let output = "";
+  for (let i = start; i < commandHistory.length; i++) {
+    output += `${String(i + 1).padStart(5)}  ${commandHistory[i]}\n`;
+  }
+  writeOutput(output.length > 0 ? output : null, null, redirects);
+}
+
+function handleDeclareBuiltin(args: string[], redirects: Redirect[]): void {
+  if (args[0] === "-p") {
+    const name = args[1];
+    if (!name) {
+      let output = "";
+      for (const [key, value] of [...shellVariables.entries()].sort()) {
+        output += `declare -- ${key}="${value}"\n`;
+      }
+      writeOutput(output.length > 0 ? output : null, null, redirects);
+      return;
+    }
+    const value = shellVariables.get(name);
+    if (value !== undefined) {
+      writeOutput(`declare -- ${name}="${value}"\n`, null, redirects);
+    } else {
+      writeOutput(null, `declare: ${name}: not found\n`, redirects);
+    }
+    return;
+  }
+
+  for (const assignment of args) {
+    const eqIndex = assignment.indexOf("=");
+    const name = eqIndex === -1 ? assignment : assignment.slice(0, eqIndex);
+    const value = eqIndex === -1 ? "" : assignment.slice(eqIndex + 1);
+
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      writeOutput(null, `declare: \`${assignment}': not a valid identifier\n`, redirects);
+      continue;
+    }
+    shellVariables.set(name, value);
+  }
+}
 
 type Redirect = {
   fd: 1 | 2;
@@ -143,27 +451,53 @@ type Redirect = {
   append: boolean;
 };
 
+if (process.env.HISTFILE) {
+  loadHistoryFile(process.env.HISTFILE);
+  lastAppendedIndex = commandHistory.length;
+}
+
 rl.prompt();
 rl.on("line", (line) => {
   lastTabPartial = "";
   tabPressCount = 0;
+
+  if (line.trim().length > 0) {
+    commandHistory.push(line);
+  }
+
+  const pipelineSegments = splitPipeline(line);
+  if (pipelineSegments.length > 1) {
+    runPipeline(pipelineSegments);
+    return;
+  }
+
   const { args: parts, redirects } = parseCommand(line);
+
+  let background = false;
+  if (parts.length > 0 && parts[parts.length - 1] === "&") {
+    background = true;
+    parts.pop();
+  }
+
   const command = parts[0];
   const arg = parts[1];
 
   if (command == "") {
-    rl.prompt();
+    promptAfterJobs();
     return;
   } else if (command == "exit") {
+    if (process.env.HISTFILE) {
+      writeHistoryFile(process.env.HISTFILE);
+    }
     rl.close();
     return;
   } else if (command == "echo") {
     writeOutput(parts.slice(1).join(" ") + "\n", null, redirects);
-    rl.prompt();
+    promptAfterJobs();
     return;
   } else if (command == "type") {
     if (!arg) {
-      rl.prompt();
+      promptAfterJobs();
       return;
     }
 
@@ -182,25 +516,45 @@ rl.on("line", (line) => {
     }
 
     writeOutput(output, null, redirects);
-    rl.prompt();
+    promptAfterJobs();
   } else if (command == "pwd"){
     writeOutput(process.cwd() + "\n", null, redirects);
-    rl.prompt();
+    promptAfterJobs();
     return;
   } else if (command == "cd") {
     const target = expandTilde(arg ?? process.env.HOME ?? "");
 
     if (!target || !isDirectory(target)) {
       writeOutput(null, `cd: ${arg}: No such file or directory\n`, redirects);
-      rl.prompt();
+      promptAfterJobs();
       return;
     }
 
     process.chdir(target);
-    rl.prompt();
+    promptAfterJobs();
     return;
   } else if (command == "complete") {
     handleCompleteBuiltin(parts.slice(1), redirects);
+    promptAfterJobs();
+    return;
+  } else if (command == "history") {
+    handleHistoryBuiltin(parts.slice(1), redirects);
+    promptAfterJobs();
+    return;
+  } else if (command == "declare") {
+    handleDeclareBuiltin(parts.slice(1), redirects);
+    promptAfterJobs();
+    return;
+  } else if (command == "jobs") {
+    const jobs = [...jobTable.values()].sort((a, b) => a.id - b.id);
+    for (const job of jobs) {
+      process.stdout.write(formatJobLine(job));
+    }
+    for (const job of jobs) {
+      if (!job.running) {
+        jobTable.delete(job.id);
+      }
+    }
     rl.prompt();
     return;
   }
@@ -210,7 +564,7 @@ rl.on("line", (line) => {
 
     if(!executablePath){
       writeOutput(null, `${command}: command not found\n`, redirects);
-      rl.prompt();
+      promptAfterJobs();
       return;
     }
 
@@ -225,8 +579,34 @@ rl.on("line", (line) => {
       : "inherit";
 
     const child = spawn(command, parts.slice(1), {
-      stdio: ["inherit", stdout, stderr],
+      stdio: [background ? "ignore" : "inherit", stdout, stderr],
     });
+
+    if (background) {
+      const job: Job = {
+        id: allocateJobId(),
+        pid: child.pid ?? 0,
+        command: parts.join(" "),
+        child,
+        running: true,
+      };
+      jobTable.set(job.id, job);
+      child.unref();
+
+      child.on("close", () => {
+        job.running = false;
+        if (typeof stdout === "number") {
+          closeSync(stdout);
+        }
+        if (typeof stderr === "number") {
+          closeSync(stderr);
+        }
+      });
+
+      process.stdout.write(`[${job.id}] ${job.pid}\n`);
+      rl.prompt();
+      return;
+    }
 
     child.on("close", () => {
       if (typeof stdout === "number") {
@@ -235,7 +615,7 @@ rl.on("line", (line) => {
       if (typeof stderr === "number") {
         closeSync(stderr);
       }
-      rl.prompt();
+      promptAfterJobs();
     });
 
 
@@ -345,6 +725,15 @@ function parseCommand(line: string): { args: string[]; redirects: Redirect[] } {
       continue;
     }
 
+    if (char === "$" && !inSingleQuotes) {
+      const expanded = expandVariable(line, i);
+      if (expanded) {
+        current += expanded.value;
+        i = expanded.endIndex;
+        continue;
+      }
+    }
+
     if (!collectingRedirect && !inSingleQuotes && !inDoubleQuotes && /\s/.test(char)) {
       if (current.length > 0) {
         args.push(current);
@@ -363,6 +752,35 @@ function parseCommand(line: string): { args: string[]; redirects: Redirect[] } {
   }
 
   return { args, redirects };
+}
+
+function expandVariable(
+  line: string,
+  dollarIndex: number,
+): { value: string; endIndex: number } | null {
+  const rest = line.slice(dollarIndex + 1);
+
+  if (rest.startsWith("{")) {
+    const closeIndex = rest.indexOf("}");
+    if (closeIndex === -1) return null;
+    const name = rest.slice(1, closeIndex);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+    return {
+      value: lookupVariable(name),
+      endIndex: dollarIndex + 1 + closeIndex + 1 - 1,
+    };
+  }
+
+  const nameMatch = rest.match(/^[A-Za-z_][A-Za-z0-9_]*/);
+  if (!nameMatch) return null;
+  return {
+    value: lookupVariable(nameMatch[0]),
+    endIndex: dollarIndex + nameMatch[0].length,
+  };
+}
+
+function lookupVariable(name: string): string {
+  return shellVariables.get(name) ?? process.env[name] ?? "";
 }
 
 function writeOutput(
