@@ -37,12 +37,34 @@ function formatJobLine(job: Job): string {
 
 function isProcessAlive(pid: number): boolean {
   if (pid <= 0) return false;
+
+  // Linux: zombies still accept kill(0); treat state Z as not alive.
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+    const closeParen = stat.indexOf(")");
+    if (closeParen !== -1) {
+      const state = stat[closeParen + 2];
+      if (state === "Z") return false;
+      return true;
+    }
+  } catch {
+    // /proc unavailable (e.g. macOS) — fall through
+  }
+
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+
+  // macOS / fallback: detect zombies via ps
+  const result = spawnSync("ps", ["-o", "state=", "-p", String(pid)], {
+    encoding: "utf-8",
+  });
+  const state = (result.stdout ?? "").trim();
+  if (result.status !== 0 || state.length === 0) return false;
+  if (state.startsWith("Z")) return false;
+  return true;
 }
 
 function syncJobStatuses(): void {
@@ -617,6 +639,10 @@ rl.on("line", (line) => {
       };
       jobTable.set(job.id, job);
       child.unref();
+
+      child.on("exit", () => {
+        job.running = false;
+      });
 
       child.on("close", () => {
         job.running = false;
