@@ -47,7 +47,7 @@ rl.on("line", (line) => {
   const command = parts[0];
   const arg = parts[1];
 
-  if (command === "") {
+  if (!command) {
     promptAfterJobs();
     return;
   } else if (command === "exit") {

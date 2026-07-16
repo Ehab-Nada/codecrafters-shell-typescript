@@ -104,10 +104,12 @@ export function findExecutableCompletions(partial: string): string[] {
 }
 
 export function findExecutableInPath(command: string): string | null {
+  if (!command) return null;
   const pathEnv = process.env.PATH;
   if (!pathEnv) return null;
   const directories = pathEnv.split(path.delimiter);
   for (const dir of directories) {
+    if (!dir) continue;
     const fullPath = path.join(dir, command);
     try {
       accessSync(fullPath, constants.X_OK);
