@@ -5,6 +5,9 @@ A POSIX-style shell built in **TypeScript** with **Bun**, as a solution to the
 
 Type a command. Press Tab. Pipe it. Background it. Your terminal, your rules.
 
+**Full concept guide** (what each stage means, where the code lives, and why):
+[docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md)
+
 ```text
 $ echo hello | wc
 $ sleep 30 &
